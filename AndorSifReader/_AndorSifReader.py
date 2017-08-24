@@ -2,9 +2,15 @@ import numpy as np
 from ctypes import WinDLL, c_int, c_float, c_char_p, byref, POINTER, c_uint, \
     create_string_buffer, c_double
     
-
+#------------------------------------------------------------------------------ 
+# SifError
+#------------------------------------------------------------------------------
     
 class SifError:
+    """This is a helper class to handle error codes produced by SIFReaderSDK.
+        
+    """
+    
     ATSIF_SUCCESS = "ATSIF_SUCCESS"
     ATSIF_SIF_FORMAT_ERROR = "ATSIF_SIF_FORMAT_ERROR"
     ATSIF_NO_SIF_LOADED = "ATSIF_NO_SIF_LOADED"
@@ -37,6 +43,20 @@ class SifError:
     
     @staticmethod
     def FromCode(errorCode):
+        """Converts SIFReaderSDK error code to string.
+        
+        Parameters
+        ----------
+        errorCode : int
+            Error code number
+        
+        Returns
+        -------
+        str
+            Corresponding error string.
+        
+        """
+        
         if errorCode in SifError.ERROR_STR:
             return SifError.ERROR_STR[errorCode]
         else:
@@ -44,11 +64,42 @@ class SifError:
 
     @staticmethod
     def ProcessErrorCode(errorCode):
+        """Processes error codes, raises RuntimeError if the error code indicate
+        problems. In case of success, does nothing.
+        
+        Parameters
+        ----------
+        errorCode : int
+            Error code number
+        
+        """
         errorStr = SifError.FromCode(errorCode)
         if errorStr != SifError.ATSIF_SUCCESS:
             raise RuntimeError("Error: %s" % (errorStr))
     
+#------------------------------------------------------------------------------ 
+# AndorSifFile
+#------------------------------------------------------------------------------
+ 
 class AndorSifFile():
+    """This is main class to handle the reading of sif files. All the work is
+    done in the constructor, the sif file is opened, data is read and the file
+    is closed.
+    
+    Parameters
+    ----------
+    filename : str
+        Path to .sif file to read
+    
+    Attributes
+    ----------
+    signal : :class:`_SifFrame`
+        Instance of the :class:`_SifFrame` helper class to store signal information.
+    bg : :class:`_SifFrame`
+        Instance of the :class:`_SifFrame` helper class to store background information.
+        
+    """
+    
     # Read mode
     ATSIF_ReadAll = 0x40000000
     ATSIF_ReadHeaderOnly = 0x40000001
@@ -238,8 +289,8 @@ class AndorSifFile():
         
         # Read contents
         try:
-            self.signal = SifFrame(self, self.ATSIF_Signal)
-            self.bg = SifFrame(self, self.ATSIF_Background)
+            self.signal = _SifFrame(self, self.ATSIF_Signal)
+            self.bg = _SifFrame(self, self.ATSIF_Background)
         finally:
             self._Close()
 
@@ -256,8 +307,36 @@ class AndorSifFile():
         errorCode = self.dll.ATSIF_CloseFile()
         SifError.ProcessErrorCode(errorCode)
         
-class SifFrame:
+#------------------------------------------------------------------------------ 
+# _SifFrame
+#------------------------------------------------------------------------------
+        
+class _SifFrame:
+    """
+    This is helper class to store single image/spectrum together with all the
+    properties and calibration. The creation of this class is always through
+    :class:`AndorSifFile`.
     
+    Parameters
+    ----------
+    sif : :class:`AndorSifFile`
+        Reference to :class:`AndorSifFile`
+    source : int
+        Andor code for signal/background/reference.
+    
+    Attributes
+    ----------
+    props : dict
+        Contain all the properties of the measurement (e.g exposure time, etc)
+    xValues : ndarray of floats
+        The calibrated values of x-axis
+    wls : ndarray of floats
+        If the x-axis represents wavelength, then this array holds wavelength in
+        meters.
+    data: ndarray of floats
+        The data array to contain image/spectrum.
+        
+    """
     def __init__(self, sif, source):
         self._sif = sif
         self._source = source
