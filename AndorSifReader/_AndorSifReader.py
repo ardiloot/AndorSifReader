@@ -2,6 +2,8 @@ import numpy as np
 from ctypes import WinDLL, c_int, c_float, c_char_p, byref, POINTER, c_uint, \
     create_string_buffer, c_double
     
+
+    
 class SifError:
     ATSIF_SUCCESS = "ATSIF_SUCCESS"
     ATSIF_SIF_FORMAT_ERROR = "ATSIF_SIF_FORMAT_ERROR"
@@ -69,6 +71,7 @@ class AndorSifFile():
     ATSIF_Double = 0x40000007
     ATSIF_String = 0x40000008
     
+    # Converters
     ATSIF_CONV = {ATSIF_AT_8: np.int8,
               ATSIF_AT_U8: np.uint8,
               ATSIF_AT_32: np.int32,
@@ -77,13 +80,124 @@ class AndorSifFile():
               ATSIF_AT_U64: np.uint64,
               ATSIF_Float: np.float,
               ATSIF_Double: np.double,
-              ATSIF_String: str
+              ATSIF_String: lambda x: x.decode()
               }
     
     # Calib axes
     ATSIF_CalibX        = 0x40000000
     ATSIF_CalibY        = 0x40000001
     ATSIF_CalibZ        = 0x40000002
+    
+    # Property names
+    ANTSIF_PROPS = [
+        "Type",
+        "Active",
+        "Version",
+        "Time",
+        "FormattedTime",
+        "FileName",
+        "Temperature",
+        "UnstabalizedTemperature",
+        "Head",
+        "HeadModel",
+        "StoreType",
+        "DataType",
+        "SIDisplacement",
+        "SINumberSubFrames",
+        "PixelReadOutTime",
+        "TrackHeight",
+        "ReadPattern",
+        "ReadPatternFullName",
+        "ShutterDelay",
+        "CentreRow",
+        "RowOffset",
+        "Operation",
+        "Mode",
+        "ModeFullName",
+        "TriggerSource",
+        "TriggerSourceFullName",
+        "TriggerLevel",
+        "ExposureTime",
+        "Delay",
+        "IntegrationCycleTime",
+        "NumberIntegrations",
+        "KineticCycleTime",
+        "FlipX",
+        "FlipY",
+        "Clock",
+        "AClock",
+        "IOC",
+        "Frequency",
+        "NumberPulses",
+        "FrameTransferAcquisitionMode",
+        "BaselineClamp",
+        "PreScan",
+        "EMRealGain",
+        "BaselineOffset",
+        "SWVersion",
+        "SWVersionEx",
+        "MCP",
+        "Gain",
+        "VerticalClockAmp",
+        "VerticalShiftSpeed",
+        "OutputAmplifier",
+        "PreAmplifierGain",
+        "Serial",
+        "DetectorFormatX",
+        "DetectorFormatZ",
+        "NumberImages",
+        "NumberSubImages",
+        "SubImageHBin",
+        "SubImageVBin",
+        "SubImageLeft",
+        "SubImageRight",
+        "SubImageTop",
+        "SubImageBottom",
+        "Baseline",
+        "CCDLeft",
+        "CCDRight",
+        "CCDTop",
+        "CCDBottom",
+        "Sensitivity",
+        "DetectionWavelength",
+        "CountConvertMode",
+        "IsCountConvert",
+        "XAxisType",
+        "XAxisUnit",
+        "YAxisType",
+        "YAxisUnit",
+        "ZAxisType",
+        "ZAxisUnit",
+        "UserText",
+        "IsPhotonCountingEnabled",
+        "NumberThresholds",
+        "Threshold1",
+        "Threshold2",
+        "Threshold3",
+        "Threshold4",
+        "AveragingFilterMode",
+        "AveragingFactor",
+        "FrameCount",
+        "NoiseFilter",
+        "Threshold",
+        "TimeStamp",
+        "OutputAEnabled",
+        "OutputAWidth",
+        "OutputADelay",
+        "OutputAPolarity",
+        "OutputBEnabled",
+        "OutputBWidth",
+        "OutputBDelay",
+        "OutputBPolarity",
+        "OutputCEnabled",
+        "OutputCWidth",
+        "OutputCDelay",
+        "OutputCPolarity",
+        "GateMode",
+        "GateWidth",
+        "GateDelay",
+        "GateDelayStep",
+        "GateWidthStep"]
 
     def __init__(self, filename):
         c_int_p = POINTER(c_int)
@@ -125,17 +239,9 @@ class AndorSifFile():
         # Read contents
         try:
             self.signal = SifFrame(self, self.ATSIF_Signal)
+            self.bg = SifFrame(self, self.ATSIF_Background)
         finally:
             self._Close()
-        
-        pixelCal = c_double()
-        print(self.dll.ATSIF_GetPixelCalibration(self.ATSIF_Signal, self.ATSIF_CalibX, 10, byref(pixelCal)))
-        print("pixelCal", pixelCal.value)
-        
-        
-        
-        spectum = (c_float * 1600)()
-        print(self.dll.ATSIF_GetFrame(self.ATSIF_Signal, 0, spectum, 1600))
 
     def _Open(self):
         # Read all
@@ -156,12 +262,20 @@ class SifFrame:
         self._sif = sif
         self._source = source
         self.dll = self._sif.dll
+        self.props = {}
         
-        # Load data
-        self.nrPixels = self._GetNumberOfPixels()
+        # Get number of pixels
+        self._nrPixels = self._GetNumberOfPixels()
         
-        print("nrPixels", self.nrPixels)
-        print("ExposureTime", self._GetProperty("TriggerSource"))
+        # Read all properties
+        for prop in AndorSifFile.ANTSIF_PROPS:
+            self.props[prop] = self._GetProperty(prop)
+        
+        # Read x-axis calibration
+        self._ReadCalibration()
+        
+        # Read data
+        self._ReadData()
         
         
     def _GetNumberOfPixels(self):
@@ -187,9 +301,24 @@ class SifFrame:
             raise ValueError("Unknown target type.")
         res = AndorSifFile.ATSIF_CONV[targetType](data)
         return res
-
+    
+    def _ReadCalibration(self):
+        self.xValues = np.zeros((self._nrPixels,))
+        pixelCal = c_double()
+        for i in range(1, self._nrPixels + 1):
+            errorCode = self.dll.ATSIF_GetPixelCalibration(self._source, AndorSifFile.ATSIF_CalibX, i, byref(pixelCal))
+            SifError.ProcessErrorCode(errorCode)
+            self.xValues[i - 1] = pixelCal.value
+        
+        # If x-axis is in wavelength, then init wls array
+        if self.props["XAxisUnit"].strip() == "nm":
+            self.wls = 1e-9 * self.xValues
+            
+    def _ReadData(self):
+        spectrum = (c_float * self._nrPixels)()
+        errorCode = self.dll.ATSIF_GetFrame(self._source, 0, spectrum, self._nrPixels)
+        SifError.ProcessErrorCode(errorCode)
+        self.data = np.ctypeslib.as_array(spectrum)
         
 if __name__ == "__main__":
-    sif = AndorSifFile(r"C:\Users\Ardi\Dropbox\LABOR\Projektid\Crystalsol\eksperiment\220817\led spekter.sif")
-    
-    
+    pass
