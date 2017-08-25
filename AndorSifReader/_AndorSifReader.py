@@ -97,7 +97,14 @@ class AndorSifFile():
         Instance of the :class:`_SifFrame` helper class to store signal information.
     bg : :class:`_SifFrame`
         Instance of the :class:`_SifFrame` helper class to store background information.
-        
+    wls : ndarray of floats
+        Convenience property linking to signal.wls.
+    data : ndarray of floats
+        Convenience property linking to signal.data.
+    props : dict
+        Convenience property linking to signal.props.
+    expTime : float
+        Total exposure time in seconds of the signal channel. 
     """
     
     # Read mode
@@ -306,6 +313,22 @@ class AndorSifFile():
     def _Close(self):
         errorCode = self.dll.ATSIF_CloseFile()
         SifError.ProcessErrorCode(errorCode)
+        
+    @property
+    def wls(self):
+        return self.signal.wls
+    
+    @property
+    def data(self):
+        return self.signal.data
+    
+    @property
+    def props(self):
+        return self.signal.props
+    
+    @property
+    def expTime(self):
+        return self.props["ExposureTime"] * self.props["NumberIntegrations"]
         
 #------------------------------------------------------------------------------ 
 # _SifFrame
