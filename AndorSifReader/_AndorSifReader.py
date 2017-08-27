@@ -307,7 +307,13 @@ class AndorSifFile():
         SifError.ProcessErrorCode(errorCode)
         
         # Open
-        errorCode = self.dll.ATSIF_ReadFromFile(self._filename.encode())
+        try:
+            errorCode = self.dll.ATSIF_ReadFromFile(self._filename.encode())
+        except OSError as e:
+            if e.errno == 22:
+                raise IOError("Could not read %s" % (self._filename))
+            raise
+        
         SifError.ProcessErrorCode(errorCode)
         
     def _Close(self):
